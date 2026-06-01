@@ -1,0 +1,6 @@
+study_bot/.env
+study_bot/study_bot.db
+study_bot/output/
+__pycache__/
+*.pyc
+logs/

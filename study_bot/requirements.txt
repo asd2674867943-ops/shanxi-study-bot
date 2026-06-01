@@ -1,0 +1,32 @@
+# Telegram Bot 框架
+python-telegram-bot[job-queue]>=21.0
+
+# AI API 客户端（支持多个提供商）
+anthropic>=0.30.0
+openai>=1.0.0
+
+# 数据库
+aiosqlite>=0.20.0
+
+# 定时任务
+apscheduler>=3.10.0
+
+# 环境变量
+python-dotenv>=1.0.0
+
+# PDF 生成（试卷输出）
+reportlab>=4.0
+
+# 图像处理（OCR + 拍照搜题）
+Pillow>=10.0
+pytesseract>=0.3.10
+
+# 网页抓取（政策监控）
+httpx>=0.25.0
+beautifulsoup4>=4.12
+
+# Google Gemini API
+google-generativeai>=0.8.0
+
+# HTTP 请求
+requests>=2.31
