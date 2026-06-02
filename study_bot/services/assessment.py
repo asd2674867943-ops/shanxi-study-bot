@@ -194,3 +194,52 @@ def format_progress_message(summary: dict, exam_date: str) -> str:
     lines.append(f"效率评级：{grade}")
 
     return "\n".join(lines)
+
+
+# ============================================================
+# 研究生模式资格检查
+# ============================================================
+
+async def check_graduate_eligibility(user_id: int) -> dict:
+    """
+    判断用户是否达到研究生模式的开启条件
+    要求：所有专升本章节平均掌握度 >= GRADUATE_MODE["mastery_threshold"] (默认75%)
+
+    返回与 graduate_mode.can_start_graduate_mode 相同的格式
+    """
+    from study_bot.config import GRADUATE_MODE
+    from study_bot.database.ops import get_user_mastery
+
+    threshold = GRADUATE_MODE["mastery_threshold"]
+    mastery_data = await get_user_mastery(user_id)
+
+    # 按科目汇总
+    subject_mastery = {}
+    for row in mastery_data:
+        subj = row.get("subject_name", "未知")
+        if subj not in subject_mastery:
+            subject_mastery[subj] = {"total": 0, "chapters": []}
+        subject_mastery[subj]["chapters"].append(row.get("mastery_level", 0))
+
+    for subj, data in subject_mastery.items():
+        chapters = data["chapters"]
+        data["avg"] = sum(chapters) / len(chapters) if chapters else 0
+
+    overall_mastery = (
+        sum(d["avg"] for d in subject_mastery.values()) / len(subject_mastery)
+        if subject_mastery else 0
+    )
+
+    blocked = [
+        {"subject": s, "avg": d["avg"], "need": threshold - d["avg"]}
+        for s, d in subject_mastery.items()
+        if d["avg"] < threshold
+    ]
+
+    return {
+        "can_start": len(blocked) == 0 and overall_mastery >= threshold,
+        "overall_mastery": round(overall_mastery, 2),
+        "threshold": threshold,
+        "subject_details": subject_mastery,
+        "blocked_subjects": blocked,
+    }

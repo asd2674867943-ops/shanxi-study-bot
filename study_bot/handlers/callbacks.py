@@ -1191,3 +1191,192 @@ async def _diag_finish_all(source, diag, update, context):
 
     context.user_data.pop(DIAG_DATA, None)
     return ConversationHandler.END
+
+
+# ============================================================
+# v3 回调: 研究生模式
+# ============================================================
+
+async def graduate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """研究生模式相关回调"""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user = update.effective_user
+
+    from study_bot.database.ops import (
+        get_or_create_user,
+        get_user_mode,
+        toggle_graduate_mode,
+        get_graduate_mode,
+    )
+    from study_bot.services.graduate_mode import (
+        can_start_graduate_mode,
+        get_graduate_progress,
+        format_graduate_progress_bar,
+        format_graduate_eligibility,
+    )
+
+    await get_or_create_user(user.id, user.username, user.first_name)
+
+    if data == "grad_start":
+        # 开启研究生模式
+        eligibility = await can_start_graduate_mode(user.id)
+        if not eligibility["can_start"]:
+            msg = format_graduate_eligibility(eligibility)
+            msg += "\n\n❌ 暂未达到研究生模式开启条件，请先提升薄弱科目掌握度！"
+            await query.edit_message_text(msg)
+            return
+
+        result = await toggle_graduate_mode(user.id)
+        progress = await get_graduate_progress(user.id)
+
+        msg = (
+            "🎓 研究生模式已开启！\n\n"
+            f"📅 开始日期：{progress.get('started_at', '今天')}\n"
+            f"🏁 预计完成：{progress.get('target_completion_date', '待定')}\n\n"
+            "📚 研究生层级的学习计划将更具深度和难度：\n"
+        )
+        for m in progress.get("modules", []):
+            msg += f"   • {m['name']}（{m['subject']}）\n"
+        msg += "\n💡 使用 /plan 查看研究生模式学习计划"
+
+        await query.edit_message_text(msg)
+
+    elif data == "grad_exit":
+        # 退出研究生模式
+        from study_bot.database.ops import set_user_mode, set_graduate_mode
+        await set_user_mode(user.id, "zhuanshengben")
+        await set_graduate_mode(user.id, is_active=0)
+
+        await query.edit_message_text(
+            "🏃 已退出研究生模式\n\n"
+            "📋 当前已恢复专升本学习模式\n"
+            "💡 使用 /plan 查看学习计划\n"
+            "📝 建议进行一次 /weekly_test 综合测试来检验水平"
+        )
+
+    elif data == "grad_progress":
+        # 显示进度
+        progress = await get_graduate_progress(user.id)
+        msg = format_graduate_progress_bar(progress)
+
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        if progress.get("is_active"):
+            keyboard = [[
+                InlineKeyboardButton("🔬 深化专升本测试", callback_data="grad_deepened_test"),
+                InlineKeyboardButton("🏃 退出研究生模式", callback_data="grad_exit"),
+            ]]
+        else:
+            keyboard = [[
+                InlineKeyboardButton("🎓 开启研究生模式", callback_data="grad_start"),
+            ]]
+
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "grad_deepened_test":
+        # 触发深化专升本测试
+        await query.edit_message_text("⏳ 正在生成深化专升本综合测试...")
+        from study_bot.services.graduate_mode import trigger_deepened_exam
+
+        results = await trigger_deepened_exam(user.id)
+        for subj, result in results.get("results", {}).items():
+            from study_bot.services.test_generator import format_test_for_telegram, format_answer_for_telegram
+            test_msg = format_test_for_telegram(result)
+            await query.message.reply_text(test_msg)
+            if result.get("answer_text"):
+                answer_msg = format_answer_for_telegram(result)
+                # 如果答案太长，分段发送
+                if len(answer_msg) > 4000:
+                    await query.message.reply_text(answer_msg[:4000])
+                    await query.message.reply_text(answer_msg[4000:])
+                else:
+                    await query.message.reply_text(answer_msg)
+
+
+# ============================================================
+# v3 回调: 难度选择
+# ============================================================
+
+async def difficulty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """测试难度选择回调"""
+    query = update.callback_query
+    await query.answer()
+    data = query.data.replace("difficulty_", "")
+
+    from study_bot.config import DIFFICULTY_LEVELS
+    diff_info = DIFFICULTY_LEVELS.get(data, {"label": "未知"})
+
+    context.user_data["test_difficulty"] = data
+
+    await query.edit_message_text(
+        f"✅ 难度已设置为：{diff_info.get('emoji', '')} {diff_info['label']}\n"
+        f"   {diff_info.get('description', '')}\n\n"
+        "请选择要测试的科目："
+    )
+
+    # 重新显示科目选择
+    from study_bot.handlers.commands import weekly_test_command
+    # 创建一个 fake update 来重新显示科目选择
+    if query.message:
+        await query.message.reply_text("请使用 /weekly_test 重新选择科目")
+
+
+# ============================================================
+# v3 回调: 知识点专项出题
+# ============================================================
+
+async def knowledge_point_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """知识点专项出题回调"""
+    query = update.callback_query
+    await query.answer()
+    data = query.data.replace("kpquestion_", "")
+
+    user = update.effective_user
+    from study_bot.database.ops import get_or_create_user
+    await get_or_create_user(user.id, user.username, user.first_name)
+
+    try:
+        question_count = int(data)
+    except ValueError:
+        await query.edit_message_text("❌ 无效的题量选择")
+        return
+
+    subject_name = context.user_data.get("kp_subject", "电路分析")
+    knowledge_point = context.user_data.get("kp_name", "")
+    difficulty = context.user_data.get("test_difficulty", "basic")
+
+    await query.edit_message_text(
+        f"⏳ 正在生成「{knowledge_point}」专项练习题（{question_count}题）..."
+    )
+
+    from study_bot.services.test_generator import (
+        create_knowledge_point_test,
+        format_knowledge_point_test,
+        format_answer_for_telegram,
+    )
+
+    result = await create_knowledge_point_test(
+        user_id=user.id,
+        subject_name=subject_name,
+        knowledge_point=knowledge_point,
+        difficulty=difficulty,
+        question_count=question_count,
+    )
+
+    if "error" in result:
+        await query.edit_message_text(f"❌ {result['error']}")
+        return
+
+    # 发送试题
+    test_msg = format_knowledge_point_test(result)
+    await query.message.reply_text(test_msg)
+
+    # 发送答案
+    if result.get("answer_text"):
+        answer_msg = format_answer_for_telegram(result)
+        if len(answer_msg) > 4000:
+            await query.message.reply_text(answer_msg[:4000])
+            await query.message.reply_text(answer_msg[4000:])
+        else:
+            await query.message.reply_text(answer_msg)

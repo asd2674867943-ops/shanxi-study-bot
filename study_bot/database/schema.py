@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
     is_active       INTEGER DEFAULT 1,
     onboarding_done INTEGER DEFAULT 0,
     plan_paused     INTEGER DEFAULT 0,
+    study_mode      TEXT DEFAULT 'zhuanshengben',
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -147,6 +148,18 @@ CREATE TABLE IF NOT EXISTS user_schedule (
     holiday_end_date TEXT,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 研究生模式状态表
+CREATE TABLE IF NOT EXISTS graduate_mode (
+    user_id                INTEGER PRIMARY KEY REFERENCES users(user_id),
+    is_active              INTEGER DEFAULT 0,
+    started_at             TEXT,
+    target_completion_date TEXT,
+    total_modules          INTEGER DEFAULT 5,
+    completed_modules      INTEGER DEFAULT 0,
+    mastery_threshold      REAL DEFAULT 0.75,
+    created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -177,6 +190,7 @@ async def init_db():
     finally:
         await conn.close()
     await migrate_add_chapter_status()
+    await migrate_add_study_mode()
 
 
 async def migrate_add_chapter_status():
@@ -187,6 +201,19 @@ async def migrate_add_chapter_status():
         columns = [row[1] for row in await cursor.fetchall()]
         if "status" not in columns:
             await conn.execute("ALTER TABLE chapters ADD COLUMN status TEXT DEFAULT ''")
+            await conn.commit()
+    finally:
+        await conn.close()
+
+
+async def migrate_add_study_mode():
+    """迁移：为旧数据库的 users 表添加 study_mode 列（如果缺失）"""
+    conn = await get_conn()
+    try:
+        cursor = await conn.execute("PRAGMA table_info(users)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "study_mode" not in columns:
+            await conn.execute("ALTER TABLE users ADD COLUMN study_mode TEXT DEFAULT 'zhuanshengben'")
             await conn.commit()
     finally:
         await conn.close()

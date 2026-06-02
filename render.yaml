@@ -1,12 +1,15 @@
 services:
-  - type: worker
+  - type: web
     name: shanxi-study-bot
     env: python
-    runtime: python3.11
+    plan: free
     buildCommand: pip install -r study_bot/requirements.txt
     startCommand: python3 run_bot.py
+    healthCheckPath: /
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: TZ
+        value: Asia/Shanghai

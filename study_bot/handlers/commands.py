@@ -216,7 +216,34 @@ async def weekly_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await get_or_create_user(user.id, user.username, user.first_name)
 
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+    # 获取当前选择的难度（默认basic）
+    current_diff = context.user_data.get("test_difficulty", "basic")
+    from study_bot.config import DIFFICULTY_LEVELS
+
     keyboard = [
+        # 难度选择行
+        [
+            InlineKeyboardButton(
+                f"{'✅ ' if current_diff == 'basic' else ''}🟢 专升本基础",
+                callback_data="difficulty_basic"
+            ),
+            InlineKeyboardButton(
+                f"{'✅ ' if current_diff == 'advanced' else ''}🟡 专升本进阶",
+                callback_data="difficulty_advanced"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                f"{'✅ ' if current_diff == 'grad_intro' else ''}🟠 研究生入门",
+                callback_data="difficulty_grad_intro"
+            ),
+            InlineKeyboardButton(
+                f"{'✅ ' if current_diff == 'grad_advanced' else ''}🔴 研究生进阶",
+                callback_data="difficulty_grad_advanced"
+            ),
+        ],
+        # 分隔行 — 科目选择
         [
             InlineKeyboardButton("📘 高等数学", callback_data="weeklytest_高等数学"),
             InlineKeyboardButton("🔌 电路分析", callback_data="weeklytest_电路分析"),
@@ -227,8 +254,9 @@ async def weekly_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         ],
     ]
 
+    diff_label = DIFFICULTY_LEVELS.get(current_diff, {}).get("label", "专升本基础")
     await update.message.reply_text(
-        "📝 周测试卷生成\n\n请选择要测试的科目：",
+        f"📝 周测试卷生成\n\n当前难度：{diff_label}\n请选择难度和科目：",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -608,7 +636,7 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """完整帮助命令"""
     help_text = (
-        "🎓 <b>山西专升本学习助手 v2 — 完整帮助</b>\n\n"
+        "🎓 <b>山西专升本学习助手 v3 — 完整帮助</b>\n\n"
         "<b>📌 每日学习：</b>\n"
         "  /plan — 查看/生成今日学习计划\n"
         "  /log — 记录学习内容\n"
@@ -619,10 +647,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /progress — 学习进度总览\n"
         "  /score_line — 分数线预测 + 目标进度条\n"
         "  /assess — 知识点自评\n\n"
+        "<b>🎓 研究生模式：</b>\n"
+        "  /graduate — 研究生难度学习模式开关\n"
+        "  含资格评估、进度追踪、深化专升本测试\n\n"
         "<b>📝 周测系统：</b>\n"
-        "  /weekly_test — 获取周测试卷（含PDF）\n"
+        "  /weekly_test — 获取周测试卷（含难度选择+PDF）\n"
         "  /submit_test — 提交错题反馈\n"
-        "  做完回复「错了 1,3,5」→ 自动调整计划\n\n"
+        "  做完回复「错了 1,3,5」→ 自动调整计划\n"
+        "  也可直接发送「XXX知识点不会」→ 专项出题\n\n"
         "<b>📷 拍照搜题：</b>\n"
         "  /solve — 拍照搜题说明\n"
         "  直接发题目照片 → AI 详细解题\n\n"
@@ -631,7 +663,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /review_errors — 复习错题\n\n"
         "<b>🔔 政策与信息：</b>\n"
         "  /policy — 检查山西专升本政策更新\n"
-        "  /timeline — 考试时间线\n\n"
+        "  /timeline — 考试时间线\n"
+        "  /taiyuan_info — 太原工业学院专升本信息\n\n"
         "<b>⏯️ 学习控制：</b>\n"
         "  /pause — 暂停今日学习计划\n"
         "  /resume — 恢复学习计划\n\n"
@@ -881,3 +914,184 @@ async def submit_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "   └─ 重新生成学习计划\n\n"
         "💡 也可以直接发送「错了 X,X,X」来反馈"
     )
+
+
+# ============================================================
+# v3 新增: /graduate — 研究生难度学习模式
+# ============================================================
+
+async def graduate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """研究生难度学习模式开关"""
+    user = update.effective_user
+    await get_or_create_user(user.id, user.username, user.first_name)
+
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+    from study_bot.database.ops import get_user_mode, get_graduate_mode
+    from study_bot.services.graduate_mode import (
+        can_start_graduate_mode,
+        get_graduate_progress,
+        format_graduate_progress_bar,
+        format_graduate_eligibility,
+    )
+
+    study_mode = await get_user_mode(user.id)
+    grad_data = await get_graduate_mode(user.id)
+    is_graduate_active = grad_data and grad_data.get("is_active")
+
+    # 研究生模式已激活 → 显示进度和管理按钮
+    if is_graduate_active:
+        progress = await get_graduate_progress(user.id)
+        msg = format_graduate_progress_bar(progress)
+
+        keyboard = [
+            [InlineKeyboardButton("📈 刷新进度", callback_data="grad_progress")],
+            [
+                InlineKeyboardButton("🔬 深化专升本测试", callback_data="grad_deepened_test"),
+                InlineKeyboardButton("🏃 退出研究生模式", callback_data="grad_exit"),
+            ],
+        ]
+        await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # 检查资格
+    eligibility = await can_start_graduate_mode(user.id)
+    msg = format_graduate_eligibility(eligibility)
+
+    if eligibility["can_start"]:
+        keyboard = [
+            [InlineKeyboardButton("🎓 开启研究生模式", callback_data="grad_start")],
+            [InlineKeyboardButton("📊 查看详细评估", callback_data="grad_progress")],
+        ]
+    else:
+        keyboard = [
+            [InlineKeyboardButton("📊 查看详细评估", callback_data="grad_progress")],
+        ]
+
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+# ============================================================
+# v3 新增: /taiyuan_info — 太原工业学院专升本信息
+# ============================================================
+
+async def taiyuan_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """查看太原工业学院专升本相关信息"""
+    await update.message.chat.send_action(ChatAction.TYPING)
+    await update.message.reply_text("⏳ 正在获取太原工业学院专升本信息...")
+
+    try:
+        from study_bot.services.taiyuan_scraper import scrape_taiyuan_info, format_taiyuan_info
+        info = await scrape_taiyuan_info()
+        msg = format_taiyuan_info(info)
+        await update.message.reply_text(msg, disable_web_page_preview=True)
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ 获取信息失败：{str(e)[:200]}\n\n"
+            f"🏫 太原工业学院\n"
+            f"📋 电气工程及其自动化\n"
+            f"🌐 官网：https://www.tit.edu.cn/\n"
+            f"📖 招生网：https://www.tit.edu.cn/zsw/index.htm"
+        )
+
+
+# ============================================================
+# v3 新增: 知识点专项出题（文本消息处理器）
+# ============================================================
+
+async def handle_knowledge_point_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    处理用户关于知识点的提问
+    匹配模式：XXX知识点不会 / XXX不会 / XXX不懂 / XXX搞不懂
+    """
+    import re
+    text = update.message.text.strip()
+
+    # 检测模式
+    patterns = [
+        (r'(.+?)知识点不会', True),
+        (r'(.+?)不会', True),
+        (r'(.+?)不懂', True),
+        (r'(.+?)搞不懂', True),
+        (r'(.+?)学不明白', True),
+    ]
+
+    knowledge_point = None
+    for pattern, _ in patterns:
+        match = re.search(pattern, text)
+        if match:
+            kp = match.group(1).strip()
+            # 过滤太短的匹配和明显的日常对话
+            if len(kp) >= 2 and not any(
+                w in kp for w in ["我", "你", "他", "这", "那", "怎么", "什么", "为什么"]
+            ):
+                knowledge_point = kp
+                break
+
+    if not knowledge_point:
+        return  # 不处理，让其他处理器处理
+
+    user = update.effective_user
+    await get_or_create_user(user.id, user.username, user.first_name)
+
+    # 在章节中模糊匹配知识点
+    from study_bot.database.ops import get_all_subjects, get_chapters_by_subject
+    subjects = await get_all_subjects()
+
+    matched_subject = None
+    matched_chapter = None
+    best_score = 0
+
+    for subj in subjects:
+        chapters = await get_chapters_by_subject(subj["id"])
+        for ch in chapters:
+            ch_name = ch.get("name", "")
+            # 精确匹配
+            if knowledge_point in ch_name:
+                matched_subject = subj["name"]
+                matched_chapter = ch_name
+                best_score = 100
+                break
+            # 部分匹配
+            score = sum(1 for c in knowledge_point if c in ch_name) / max(len(knowledge_point), 1)
+            if score > best_score and score > 0.3:
+                best_score = score
+                matched_subject = subj["name"]
+                matched_chapter = ch_name
+
+    if not matched_subject:
+        await update.message.reply_text(
+            f"🤔 没有在知识点库中找到「{knowledge_point}」\n\n"
+            "请确认知识点名称是否正确，或使用以下命令：\n"
+            "  /weekly_test — 选择科目和难度生成试卷\n"
+            "  /assess — 知识点自评\n"
+            "  /solve — 拍照搜题"
+        )
+        return
+
+    # 显示确认按钮
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+    current_diff = context.user_data.get("test_difficulty", "basic")
+    from study_bot.config import DIFFICULTY_LEVELS
+    diff_label = DIFFICULTY_LEVELS.get(current_diff, {}).get("label", "专升本基础")
+
+    await update.message.reply_text(
+        f"🎯 检测到知识点：{knowledge_point}\n"
+        f"📚 匹配章节：{matched_subject} — {matched_chapter}\n"
+        f"📊 难度：{diff_label}\n\n"
+        "请选择题量：",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("5题（快速练习）", callback_data=f"kpquestion_5"),
+                InlineKeyboardButton("10题（标准练习）", callback_data=f"kpquestion_10"),
+            ],
+            [
+                InlineKeyboardButton("15题（强化训练）", callback_data=f"kpquestion_15"),
+            ],
+        ]),
+    )
+
+    # 存储匹配信息到 user_data
+    context.user_data["kp_subject"] = matched_subject
+    context.user_data["kp_name"] = knowledge_point
+    context.user_data["kp_chapter"] = matched_chapter

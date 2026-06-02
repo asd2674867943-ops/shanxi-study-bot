@@ -616,3 +616,132 @@ async def is_plan_paused(user_id: int) -> bool:
         return bool(row and row[0])
     finally:
         await conn.close()
+
+
+# ============================================================
+# 研究生模式 CRUD
+# ============================================================
+
+async def get_user_mode(user_id: int) -> str:
+    """获取用户当前学习模式"""
+    conn = await get_conn()
+    try:
+        cursor = await conn.execute("SELECT study_mode FROM users WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        return row[0] if row else "zhuanshengben"
+    finally:
+        await conn.close()
+
+
+async def set_user_mode(user_id: int, mode: str):
+    """设置用户学习模式"""
+    conn = await get_conn()
+    try:
+        await conn.execute("UPDATE users SET study_mode = ? WHERE user_id = ?", (mode, user_id))
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
+async def get_graduate_mode(user_id: int) -> Optional[dict]:
+    """获取用户研究生模式状态"""
+    conn = await get_conn()
+    try:
+        cursor = await conn.execute(
+            "SELECT * FROM graduate_mode WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        await conn.close()
+
+
+async def set_graduate_mode(user_id: int, **kwargs):
+    """设置研究生模式状态（Upsert）"""
+    conn = await get_conn()
+    try:
+        # 检查是否存在
+        cursor = await conn.execute("SELECT 1 FROM graduate_mode WHERE user_id = ?", (user_id,))
+        exists = await cursor.fetchone()
+        if exists:
+            set_clause = ", ".join(f"{k} = ?" for k in kwargs)
+            values = list(kwargs.values()) + [user_id]
+            await conn.execute(f"UPDATE graduate_mode SET {set_clause} WHERE user_id = ?", values)
+        else:
+            columns = ["user_id"] + list(kwargs.keys())
+            placeholders = ["?"] * len(columns)
+            values = [user_id] + list(kwargs.values())
+            await conn.execute(
+                f"INSERT INTO graduate_mode ({', '.join(columns)}) VALUES ({', '.join(placeholders)})",
+                values,
+            )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
+async def toggle_graduate_mode(user_id: int) -> dict:
+    """切换研究生模式，返回当前状态"""
+    conn = await get_conn()
+    try:
+        cursor = await conn.execute(
+            "SELECT is_active FROM graduate_mode WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            # 关闭研究生模式
+            await conn.execute(
+                "UPDATE graduate_mode SET is_active = 0 WHERE user_id = ?", (user_id,)
+            )
+            await conn.execute(
+                "UPDATE users SET study_mode = 'zhuanshengben' WHERE user_id = ?", (user_id,)
+            )
+            await conn.commit()
+            return {"study_mode": "zhuanshengben", "is_active": False}
+        else:
+            # 开启研究生模式
+            today = date.today().isoformat()
+            if row:
+                await conn.execute(
+                    "UPDATE graduate_mode SET is_active = 1, started_at = ? WHERE user_id = ?",
+                    (today, user_id),
+                )
+            else:
+                await conn.execute(
+                    "INSERT INTO graduate_mode (user_id, is_active, started_at) VALUES (?, 1, ?)",
+                    (user_id, today),
+                )
+            await conn.execute(
+                "UPDATE users SET study_mode = 'graduate' WHERE user_id = ?", (user_id,)
+            )
+            await conn.commit()
+            return {"study_mode": "graduate", "is_active": True}
+    finally:
+        await conn.close()
+
+
+async def update_graduate_progress(user_id: int, completed_delta: int = 0) -> dict:
+    """更新研究生模式进度，返回进度信息"""
+    conn = await get_conn()
+    try:
+        cursor = await conn.execute(
+            "SELECT total_modules, completed_modules FROM graduate_mode WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return {"total": 5, "completed": 0, "percentage": 0.0}
+        total = row[0] or 5
+        completed = min((row[1] or 0) + completed_delta, total)
+        await conn.execute(
+            "UPDATE graduate_mode SET completed_modules = ? WHERE user_id = ?",
+            (completed, user_id),
+        )
+        await conn.commit()
+        return {
+            "total": total,
+            "completed": completed,
+            "percentage": round(completed / total * 100, 1) if total > 0 else 0.0,
+        }
+    finally:
+        await conn.close()

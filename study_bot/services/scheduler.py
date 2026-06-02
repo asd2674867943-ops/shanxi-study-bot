@@ -55,14 +55,48 @@ async def daily_plan_job(context: ContextTypes.DEFAULT_TYPE):
             elif today.weekday() == 5:
                 day_type = "saturday_test"
 
+            # 检测学习模式
+            study_mode = "zhuanshengben"
+            try:
+                from study_bot.database.ops import get_user_mode
+                study_mode = await get_user_mode(user_id)
+            except Exception:
+                pass
+
             plan = await generate_daily_plan(
-                user_id, daily_hours=user["daily_hours"], day_type=day_type
+                user_id, daily_hours=user.get("daily_hours", 6), day_type=day_type,
+                study_mode=study_mode,
             )
             greeting = get_morning_greeting()
             message = format_plan_message(plan, greeting)
 
-            days_left = days_until(user["exam_date"])
-            message += f"\n\n🎯 距考试还有 {days_left} 天，加油！"
+            days_left = days_until(user.get("exam_date", "2027-03-20"))
+
+            # 考试倒计时里程碑提醒
+            from study_bot.config import EXAM_COUNTDOWN_MILESTONES
+            if days_left in EXAM_COUNTDOWN_MILESTONES:
+                if days_left == 1:
+                    message += f"\n\n🚨 明天就是考试日！调整好心态，早睡早起，相信自己！"
+                elif days_left <= 7:
+                    message += f"\n\n⚠️ 仅剩 {days_left} 天！最后冲刺，查漏补缺！"
+                elif days_left <= 30:
+                    message += f"\n\n⏰ 距考试仅 {days_left} 天，进入冲刺阶段！"
+                else:
+                    message += f"\n\n📅 距考试 {days_left} 天，时间还很充裕，按计划稳步前进！"
+            else:
+                message += f"\n\n🎯 距考试还有 {days_left} 天，加油！"
+
+            # 研究生模式进度附加
+            if study_mode == "graduate":
+                try:
+                    from study_bot.services.graduate_mode import get_graduate_progress
+                    grad_prog = await get_graduate_progress(user_id)
+                    pct = grad_prog.get("percentage", 0)
+                    from study_bot.utils.helpers import progress_bar
+                    bar = progress_bar(pct, length=12)
+                    message += f"\n\n🎓 研究生模式进度：{bar} {pct}%"
+                except Exception:
+                    pass
 
             await bot.send_message(chat_id=user_id, text=message)
             logger.info(f"   已推送计划给用户 {user_id} ({day_type})")

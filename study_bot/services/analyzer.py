@@ -28,6 +28,10 @@ from study_bot.data.prompts import (
     WEEKLY_ANALYSIS_PROMPT,
     PHOTO_SOLVER_PROMPT,
     TEST_GENERATION_PROMPT,
+    DIAGNOSTIC_TEST_PROMPT,
+    GRADUATE_TEST_PROMPT,
+    KNOWLEDGE_POINT_QUESTION_PROMPT,
+    DEEPENED_EXAM_PROMPT,
 )
 
 
@@ -270,10 +274,12 @@ async def generate_weekly_test(
     chapters: list,
     difficulty_level: str = "medium",
     question_count: int = 10,
+    mode: str = "zhuanshengben",
 ) -> str:
     """
     生成周测试卷（文本格式，后续转PDF）
     chapters: [{"name": "xxx", "mastery": 0.5, "importance": 4}]
+    mode: "zhuanshengben" | "graduate" | "deepened"
     """
     if not AI_ENABLED:
         return _rule_based_test_generation(subject_name, chapters, question_count)
@@ -283,7 +289,25 @@ async def generate_weekly_test(
             f"- {c['name']}（掌握度{c.get('mastery', 0)*100:.0f}%，重要度{c.get('importance', 3)}/5）"
             for c in chapters
         )
-        prompt = TEST_GENERATION_PROMPT.format(
+
+        # 根据模式选择提示词
+        if mode == "graduate":
+            prompt_template = GRADUATE_TEST_PROMPT
+            system_prompt = "你是一位研究生入学考试辅导老师，擅长命制考研难度的高质量试题。题目考查深度和综合性。请用中文输出。"
+            max_tokens = 4000
+            temperature = 0.4
+        elif mode == "deepened":
+            prompt_template = DEEPENED_EXAM_PROMPT
+            system_prompt = "你是一位专升本资深教研专家，能从更高视角审视专升本考点。你的题目新颖有深度，帮助学生融会贯通。请用中文输出。"
+            max_tokens = 4000
+            temperature = 0.4
+        else:
+            prompt_template = TEST_GENERATION_PROMPT
+            system_prompt = "你是一位专升本的出题老师，擅长命制高质量试题。你出的题目严谨、规范，覆盖考点全面，难度适中，附有详尽解析。请用中文输出。"
+            max_tokens = 3000
+            temperature = 0.5
+
+        prompt = prompt_template.format(
             subject_name=subject_name,
             chapters_list=chapters_text,
             difficulty=difficulty_level,
@@ -291,16 +315,54 @@ async def generate_weekly_test(
         )
 
         result = await _call_ai(
-            system_prompt="你是一位专升本的出题老师，擅长命制高质量试题。你出的题目严谨、规范，覆盖考点全面，难度适中，附有详尽解析。请用中文输出。",
+            system_prompt=system_prompt,
             user_prompt=prompt,
-            max_tokens=3000,
-            temperature=0.5,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
         return result if result else _rule_based_test_generation(subject_name, chapters, question_count)
 
     except Exception as e:
         print(f"[生成试卷失败] {e}")
         return _rule_based_test_generation(subject_name, chapters, question_count)
+
+
+async def generate_knowledge_point_questions(
+    subject_name: str,
+    knowledge_point: str,
+    difficulty: str = "基础",
+    question_count: int = 5,
+) -> str:
+    """
+    生成针对特定知识点的专项练习题
+    """
+    if not AI_ENABLED:
+        return (
+            f"📝 {subject_name} 专项练习\n\n"
+            f"🎯 知识点：{knowledge_point}\n\n"
+            f"⚠️ 未配置 AI API Key，无法生成专项练习题。\n"
+            f"请在 .env 中配置 API Key 后重试。"
+        )
+
+    try:
+        prompt = KNOWLEDGE_POINT_QUESTION_PROMPT.format(
+            subject_name=subject_name,
+            knowledge_point=knowledge_point,
+            difficulty=difficulty,
+            count=question_count,
+        )
+
+        result = await _call_ai(
+            system_prompt="你是一位资深的专升本辅导老师，擅长针对特定知识点设计精准的专项练习。你的题目层次分明，由浅入深，帮助学生彻底攻克难点。请用中文输出。",
+            user_prompt=prompt,
+            max_tokens=3000,
+            temperature=0.4,
+        )
+        return result if result else ""
+
+    except Exception as e:
+        print(f"[知识点出题失败] {e}")
+        return ""
 
 
 # ============================================================

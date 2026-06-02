@@ -219,14 +219,28 @@ async def generate_daily_plan(
     daily_hours: int = None,
     day_type: str = None,
     is_class_day: bool = None,
+    study_mode: str = None,
 ) -> dict:
     """
     生成每日学习计划（自适应版本）
     - daily_hours: 手动指定学习小时数（可选）
     - day_type: 手动指定日期类型（可选）
     - is_class_day: 手动指定是否为上课日（可选）
+    - study_mode: 学习模式 "zhuanshengben" | "graduate"（可选，默认从DB读取）
     """
     today = date.today()
+
+    # 0. 确定学习模式
+    if study_mode is None:
+        try:
+            from study_bot.database.ops import get_user_mode
+            study_mode = await get_user_mode(user_id)
+        except Exception:
+            study_mode = "zhuanshengben"
+
+    # 研究生模式：如果周日休息，改为轻量学习（不休）
+    if study_mode == "graduate" and today.weekday() == 6:
+        day_type = "free_day"  # 研究生模式不休周日
 
     # 1. 确定日期类型和小时数
     if day_type is None:
@@ -662,6 +676,19 @@ def format_plan_message(plan: dict, greeting: str = "早上好") -> str:
     }
 
     lines = [f"{greeting}！{day_emoji.get(day_type, '☀️')}"]
+
+    # 研究生模式头部
+    if plan.get("study_mode") == "graduate":
+        try:
+            from study_bot.services.graduate_mode import format_graduate_mode_plan_header
+            from study_bot.services.graduate_mode import get_graduate_progress
+            from study_bot.database.ops import get_user_mode
+            import asyncio as _asyncio
+            # 使用简化方式避免在同步函数中调用异步
+            header = f"\n🎓 研究生模式 | 📚 深度学习计划\n"
+            lines[0] += header
+        except Exception:
+            lines[0] += "\n🎓 研究生模式"
     lines.append("")
 
     if day_type == "paused":

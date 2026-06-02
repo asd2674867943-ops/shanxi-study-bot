@@ -10,8 +10,8 @@ import re
 from datetime import date, datetime
 from typing import Optional
 
-from study_bot.config import PDF_OUTPUT_DIR
-from study_bot.services.analyzer import generate_weekly_test, grade_photo_answer
+from study_bot.config import PDF_OUTPUT_DIR, DIFFICULTY_LEVELS
+from study_bot.services.analyzer import generate_weekly_test, grade_photo_answer, generate_knowledge_point_questions
 from study_bot.database.ops import (
     get_user_mastery,
     get_chapters_by_subject,
@@ -23,6 +23,19 @@ from study_bot.database.ops import (
 
 # 确保输出目录存在
 os.makedirs(PDF_OUTPUT_DIR, exist_ok=True)
+
+
+# 难度映射表
+DIFFICULTY_MAP = {
+    "basic": {"label": "专升本基础", "prompt_difficulty": "基础", "mode": "zhuanshengben"},
+    "advanced": {"label": "专升本进阶", "prompt_difficulty": "进阶", "mode": "zhuanshengben"},
+    "medium": {"label": "专升本进阶", "prompt_difficulty": "进阶", "mode": "zhuanshengben"},
+    "easy": {"label": "专升本基础", "prompt_difficulty": "基础", "mode": "zhuanshengben"},
+    "hard": {"label": "研究生入门", "prompt_difficulty": "研究生入门", "mode": "graduate"},
+    "grad_intro": {"label": "研究生入门", "prompt_difficulty": "研究生入门", "mode": "graduate"},
+    "grad_advanced": {"label": "研究生进阶", "prompt_difficulty": "研究生进阶", "mode": "graduate"},
+    "deepened": {"label": "深化专升本", "prompt_difficulty": "深化专升本", "mode": "zhuanshengben"},
+}
 
 
 async def create_weekly_test(
@@ -59,16 +72,25 @@ async def create_weekly_test(
     # 按掌握度排序，优先考察薄弱章节
     chapters_info.sort(key=lambda c: (c["mastery"], -c["importance"]))
 
+    # 解析难度配置
+    diff_config = DIFFICULTY_MAP.get(difficulty, DIFFICULTY_MAP["medium"])
+    study_mode = diff_config["mode"]
+    prompt_diff = diff_config["prompt_difficulty"]
+
     # AI 或规则生成测试
     test_raw = await generate_weekly_test(
         subject_name=subject_name,
         chapters=chapters_info,
-        difficulty_level=difficulty,
+        difficulty_level=prompt_diff,
         question_count=question_count,
+        mode=study_mode if study_mode == "graduate" else "zhuanshengben",
     )
 
     # 解析试题和答案（AI输出中已包含答案部分）
     test_text, answer_text = _split_test_and_answer(test_raw)
+
+    # 后处理：确保来源标注存在
+    answer_text = _ensure_source_attribution(answer_text)
 
     # 保存为TXT（后续可转PDF）
     today = date.today().isoformat()
@@ -79,7 +101,7 @@ async def create_weekly_test(
     full_content = f"{'='*60}\n"
     full_content += f"  山西专升本 · {subject_name} 周测试卷\n"
     full_content += f"  日期：{today}\n"
-    full_content += f"  难度：{difficulty} | 题量：{question_count}题\n"
+    full_content += f"  难度：{diff_config['label']} | 题量：{question_count}题\n"
     full_content += f"{'='*60}\n\n"
     full_content += test_text
     full_content += f"\n\n{'='*60}\n"
@@ -94,6 +116,68 @@ async def create_weekly_test(
         "subject": subject_name,
         "date": today,
         "difficulty": difficulty,
+        "difficulty_label": diff_config["label"],
+        "test_text": test_text,
+        "answer_text": answer_text,
+        "file_path": file_path,
+        "question_count": question_count,
+    }
+
+
+async def create_knowledge_point_test(
+    user_id: int,
+    subject_name: str,
+    knowledge_point: str,
+    difficulty: str = "basic",
+    question_count: int = 5,
+) -> dict:
+    """
+    生成针对特定知识点的专项练习题
+
+    返回同 create_weekly_test 格式
+    """
+    diff_config = DIFFICULTY_MAP.get(difficulty, DIFFICULTY_MAP["basic"])
+    prompt_diff = diff_config["prompt_difficulty"]
+
+    # 调用AI生成知识点专项题
+    test_raw = await generate_knowledge_point_questions(
+        subject_name=subject_name,
+        knowledge_point=knowledge_point,
+        difficulty=prompt_diff,
+        question_count=question_count,
+    )
+
+    if not test_raw:
+        return {"error": f"AI生成失败，请检查API Key配置"}
+
+    test_text, answer_text = _split_test_and_answer(test_raw)
+    answer_text = _ensure_source_attribution(answer_text)
+
+    today = date.today().isoformat()
+    safe_kp = knowledge_point.replace(" ", "_")[:20]
+    filename = f"kp_test_{safe_kp}_{today}.txt"
+    file_path = os.path.join(PDF_OUTPUT_DIR, filename)
+
+    full_content = f"{'='*60}\n"
+    full_content += f"  知识点专项练习\n"
+    full_content += f"  科目：{subject_name} | 知识点：{knowledge_point}\n"
+    full_content += f"  日期：{today} | 难度：{diff_config['label']}\n"
+    full_content += f"{'='*60}\n\n"
+    full_content += test_text
+    full_content += f"\n\n{'='*60}\n"
+    full_content += f"  参考答案与解析\n"
+    full_content += f"{'='*60}\n\n"
+    full_content += answer_text
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(full_content)
+
+    return {
+        "subject": subject_name,
+        "date": today,
+        "difficulty": difficulty,
+        "difficulty_label": diff_config["label"],
+        "knowledge_point": knowledge_point,
         "test_text": test_text,
         "answer_text": answer_text,
         "file_path": file_path,
@@ -259,6 +343,19 @@ def _split_test_and_answer(raw_text: str) -> tuple:
     return raw_text, "（答案暂未生成，请完成试题后联系老师批改）"
 
 
+def _ensure_source_attribution(answer_text: str) -> str:
+    """
+    确保答案部分包含来源标注
+    如果AI输出的答案缺少来源标注，自动追加
+    """
+    if "📎 题目来源" in answer_text or "题目来源" in answer_text:
+        return answer_text
+
+    # 追加通用来源标注
+    attribution = "\n\n---\n📎 题目来源：🤖 AI原创出题（由山西专升本学习助手生成，仅供学习参考）"
+    return answer_text + attribution
+
+
 def format_test_for_telegram(test_data: dict) -> str:
     """
     将试卷格式化为 Telegram 消息（分多条发送）
@@ -266,12 +363,17 @@ def format_test_for_telegram(test_data: dict) -> str:
     subject = test_data["subject"]
     date_str = test_data["date"]
     difficulty = test_data.get("difficulty", "medium")
+    difficulty_label = test_data.get("difficulty_label", test_data.get("difficulty", "medium"))
 
-    difficulty_emoji = {"easy": "🟢", "medium": "🟡", "hard": "🔴"}.get(difficulty, "🟡")
+    difficulty_emoji = {
+        "easy": "🟢", "basic": "🟢",
+        "medium": "🟡", "advanced": "🟡",
+        "hard": "🔴", "grad_intro": "🟠", "grad_advanced": "🔴",
+    }.get(difficulty, "🟡")
 
     header = (
         f"📝 周测试卷 — {subject}\n"
-        f"📅 {date_str} | {difficulty_emoji} 难度：{difficulty}\n"
+        f"📅 {date_str} | {difficulty_emoji} 难度：{difficulty_label}\n"
         f"⏰ 建议用时：90分钟\n"
         f"─" * 30
     )
@@ -287,3 +389,18 @@ def format_answer_for_telegram(test_data: dict) -> str:
         f"{test_data['answer_text']}\n\n"
         f"💡 做完后请对比答案，把错题拍照发给我，我会帮你分析薄弱点！"
     )
+
+
+def format_knowledge_point_test(test_data: dict) -> str:
+    """格式化知识点专项练习为 Telegram 消息"""
+    subject = test_data.get("subject", "")
+    kp = test_data.get("knowledge_point", "")
+    difficulty_label = test_data.get("difficulty_label", "")
+
+    header = (
+        f"📝 知识点专项练习 — {subject}\n"
+        f"🎯 知识点：{kp}\n"
+        f"📊 难度：{difficulty_label}\n"
+        f"─" * 30
+    )
+    return header + "\n\n" + test_data.get("test_text", "")

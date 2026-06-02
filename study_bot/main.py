@@ -49,6 +49,10 @@ from study_bot.handlers.commands import (
     pause_command,
     resume_command,
     submit_test_command,
+    # v3 新增
+    graduate_command,
+    taiyuan_info_command,
+    handle_knowledge_point_request,
 )
 
 # 对话处理器
@@ -80,6 +84,10 @@ from study_bot.handlers.callbacks import (
     diag_callback,
     diag_score_input,
     diag_wrong_input,
+    # v3 新增
+    graduate_callback,
+    difficulty_callback,
+    knowledge_point_callback,
 )
 from study_bot.services.scheduler import setup_scheduler
 
@@ -168,6 +176,9 @@ def main() -> None:
     app.add_handler(CommandHandler("stop_diag", stop_diag_command))
     app.add_handler(CommandHandler("start_plan", start_plan_command))
     app.add_handler(CommandHandler("diag_rounds", diag_rounds_command))
+    # v3 新增
+    app.add_handler(CommandHandler("graduate", graduate_command))
+    app.add_handler(CommandHandler("taiyuan_info", taiyuan_info_command))
 
     # ========================================
     # 注册回调处理器（Inline Button Callbacks）
@@ -176,6 +187,10 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(weekly_test_callback, pattern="^weeklytest_"))
     # 日程设置
     app.add_handler(CallbackQueryHandler(set_schedule_callback, pattern="^setschedule_"))
+    # v3 新增
+    app.add_handler(CallbackQueryHandler(graduate_callback, pattern="^grad_"))
+    app.add_handler(CallbackQueryHandler(difficulty_callback, pattern="^difficulty_"))
+    app.add_handler(CallbackQueryHandler(knowledge_point_callback, pattern="^kpquestion_"))
 
     # ========================================
     # 注册照片处理器（拍照搜题 / 提交答案）
@@ -252,8 +267,14 @@ def main() -> None:
     app.add_handler(diag_conv)
 
     # ========================================
-    # 注册文本消息处理器（错题复习回复等）
+    # 注册文本消息处理器
     # ========================================
+    # v3: 知识点专项出题（"XXX知识点不会" 等）——必须在通用"不会"之前
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.Regex(r'(.+)知识点不会|(.+?)搞不懂|(.+?)学不明白'),
+        handle_knowledge_point_request,
+    ))
+    # 错题复习回复
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Regex(r'(会了|掌握了|不会|没懂)'),
         handle_text_message,
