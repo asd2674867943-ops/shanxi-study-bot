@@ -2,7 +2,6 @@ services:
   - type: web
     name: study-helper-2027-bot
     env: python
-    plan: free
     buildCommand: pip install -r study_bot/requirements.txt
     startCommand: python3 run_bot.py
     healthCheckPath: /
@@ -15,3 +14,7 @@ services:
         value: Asia/Shanghai
       - key: RENDER_DISK_PATH
         value: /opt/render/project/data
+    disk:
+      name: bot-data
+      mountPath: /opt/render/project/data
+      sizeGB: 1
