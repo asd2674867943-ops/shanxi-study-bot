@@ -148,7 +148,12 @@ POLICY_URLS = [
 # ============================================================
 # 数据库配置
 # ============================================================
-DATABASE_PATH = os.path.join(os.path.dirname(__file__), "study_bot.db")
+# Render 挂载磁盘路径（数据持久化），本地开发则存在项目目录
+_RENDER_DISK = os.environ.get("RENDER_DISK_PATH", "")
+if _RENDER_DISK:
+    DATABASE_PATH = os.path.join(_RENDER_DISK, "study_bot.db")
+else:
+    DATABASE_PATH = os.path.join(os.path.dirname(__file__), "study_bot.db")
 
 # ============================================================
 # 定时推送默认时间

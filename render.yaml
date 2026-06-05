@@ -13,3 +13,9 @@ services:
         sync: false
       - key: TZ
         value: Asia/Shanghai
+      - key: RENDER_DISK_PATH
+        value: /opt/render/project/data
+    disk:
+      name: bot-data
+      mountPath: /opt/render/project/data
+      sizeGB: 1

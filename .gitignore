@@ -4,3 +4,5 @@ study_bot/output/
 __pycache__/
 *.pyc
 logs/
+body.json
+README.md
