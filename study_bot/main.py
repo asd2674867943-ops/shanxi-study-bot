@@ -7,6 +7,7 @@
 import asyncio
 import logging
 import sys
+import os as _os # 重命名 os 避免与 os.environ 冲突
 
 from telegram import Update
 from telegram.ext import (
@@ -24,7 +25,6 @@ from study_bot.database.ops import seed_subjects_and_chapters
 from study_bot.services.error_tracker import init_error_db
 
 from study_bot.bot_handlers import register_command_handlers
-
 
 # 对话处理器
 from study_bot.handlers.conversations import (
@@ -60,7 +60,7 @@ from study_bot.handlers.callbacks import (
     difficulty_callback,
     knowledge_point_callback,
 )
-from study_bot.services.scheduler import setup_scheduler
+from study_bot.services.scheduler import setup_scheduler # 保留导入，但在 FC 中注释掉调用
 
 # 修复 Windows GBK 编码问题
 if hasattr(sys.stdout, "reconfigure"):
@@ -68,19 +68,19 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
-# 日志文件路径
-import os as _os
+# 日志文件路径 (在 FC 中可能不需要本地文件日志，通常直接输出到控制台)
 _LOG_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "logs")
 _os.makedirs(_LOG_DIR, exist_ok=True)
 _LOG_FILE = _os.path.join(_LOG_DIR, "bot.log")
 
-# 日志配置（同时输出到控制台和文件）
+# 日志配置（同时输出到控制台和文件，FC 环境下建议只输出到控制台）
+# For FC, consider removing FileHandler if it's not needed for persistent logging.
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(_LOG_FILE, encoding="utf-8"),
+        # logging.FileHandler(_LOG_FILE, encoding="utf-8"), # Comment out for FC
     ],
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -88,8 +88,20 @@ logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-async def on_startup(app: Application):
-    """Bot 启动时的初始化操作"""
+async def get_application() -> Application:
+    """Initializes and returns the Telegram Bot Application instance.
+    This function prepares the bot for Webhook mode in serverless environments.
+    """
+
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        logger.error("=" * 50)
+        logger.error("❌ 请先配置 TELEGRAM_BOT_TOKEN！")
+        logger.error("   方法1: 在 config.py 中直接设置 TELEGRAM_BOT_TOKEN")
+        logger.error("   方法2: 创建 .env 文件，添加 TELEGRAM_BOT_TOKEN=你的token")
+        logger.error("=" * 50)
+        sys.exit(1)
+
+    # 数据库和错误追踪器初始化
     logger.info("正在初始化数据库...")
     await init_db()
     await seed_subjects_and_chapters()
@@ -102,21 +114,6 @@ async def on_startup(app: Application):
     else:
         logger.warning("⚠️ 未配置任何 AI API Key，AI 功能将降级为纯规则模式")
         logger.warning("   请在 .env 中配置 DEEPSEEK_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY")
-
-
-def main() -> None:
-    """启动 Telegram Bot"""
-
-    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        logger.error("=" * 50)
-        logger.error("❌ 请先配置 TELEGRAM_BOT_TOKEN！")
-        logger.error("   方法1: 在 config.py 中直接设置 TELEGRAM_BOT_TOKEN")
-        logger.error("   方法2: 创建 .env 文件，添加 TELEGRAM_BOT_TOKEN=你的token")
-        logger.error("=" * 50)
-        sys.exit(1)
-
-    # 异步初始化
-    asyncio.run(on_startup(None))
 
     # 创建 Application
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -236,25 +233,8 @@ def main() -> None:
     # ========================================
     # 设置定时任务
     # ========================================
-    setup_scheduler(app)
-
-    # ========================================
-    # 启动 Bot
-    # ========================================
-    provider = get_active_provider()
-    logger.info("=" * 55)
-    logger.info("🚀 山西专升本学习助手 v2 正在启动...")
-    logger.info(f"   🤖 AI 分析: {'✅ ' + provider if AI_ENABLED else '⚠️ 纯规则模式'}")
-    logger.info("   📝 周测系统: ✅")
-    logger.info("   📷 拍照搜题: ✅")
-    logger.info("   📋 错题管理: ✅")
-    logger.info("   📊 分数线预测: ✅")
-    logger.info("   🔔 政策监控: ✅")
-    logger.info(f"   ⏰ 定时推送: 每日07:00 + 21:30")
-    logger.info("   按 Ctrl+C 停止运行")
-    logger.info("=" * 55)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    main()
+    # 注意：在无服务器（如阿里云函数计算）环境中，APScheduler 定时任务不会按预期工作。
+    # 您需要使用云服务提供商的定时任务功能（如阿里云的定时触发器）来触发单独的函数。
+    # setup_scheduler(app)
+    logger.info("⚙️ Telegram Bot Application 设置完成。")
+    return app
