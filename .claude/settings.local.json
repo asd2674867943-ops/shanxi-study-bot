@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(pip install *)"
+      "PowerShell(pip install *)",
+      "Bash(pip list *)",
+      "Bash(python *)"
     ]
   }
 }
